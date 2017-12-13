@@ -20,6 +20,7 @@ import warnings
 import numpy as np
 from gpflow import settings
 from scipy.optimize import OptimizeResult, minimize
+from scipy.optimize import basinhopping
 
 from .design import RandomDesign
 from .objective import ObjectiveWrapper
@@ -43,8 +44,8 @@ class Optimizer(object):
     def domain(self):
         """
         The current domain the optimizer operates on.
-        
-        :return: :class:'~.domain.Domain` object 
+
+        :return: :class:'~.domain.Domain` object
         """
         return self._domain
 
@@ -52,10 +53,10 @@ class Optimizer(object):
     def domain(self, dom):
         """
         Sets a new domain for the optimizer.
-        
+
         Resets the initial points to the middle of the domain.
-        
-        :param dom: new :class:'~.domain.Domain` 
+
+        :param dom: new :class:'~.domain.Domain`
         """
         self._domain = dom
         self.set_initial(dom.value)
@@ -66,10 +67,10 @@ class Optimizer(object):
 
         The optimizer class supports interruption. If during the optimization ctrl+c is pressed, the last best point is
         returned.
-        
+
         The actual optimization routine is implemented in _optimize, to be implemented in subclasses.
 
-        :param objectivefx: callable, taking one argument: a 2D numpy array. The number of columns correspond to the 
+        :param objectivefx: callable, taking one argument: a 2D numpy array. The number of columns correspond to the
             dimensionality of the input domain.
         :return: OptimizeResult reporting the results.
         """
@@ -87,7 +88,7 @@ class Optimizer(object):
     def get_initial(self):
         """
         Return the initial set of points.
-        
+
         :return: initial set of points, size N x D
         """
         return self._initial
@@ -95,10 +96,10 @@ class Optimizer(object):
     def set_initial(self, initial):
         """
         Set the initial set of points.
-        
-        The dimensionality should match the domain dimensionality, and all points should 
+
+        The dimensionality should match the domain dimensionality, and all points should
         be within the domain.
-    
+
         :param initial: initial points, should all be within the domain of the optimizer.
         """
         initial = np.atleast_2d(initial)
@@ -213,7 +214,7 @@ class SciPyOptimizer(Optimizer):
 
     def _optimize(self, objective):
         """
-        Calls scipy.optimize.minimize. 
+        Calls scipy.optimize.minimize.
         """
         objective1d = lambda X: tuple(map(lambda arr: arr.ravel(), objective(X)))
         result = minimize(fun=objective1d,
@@ -223,6 +224,49 @@ class SciPyOptimizer(Optimizer):
                           **self.config)
         return result
 
+class SciPyBasinHoppingOptimizer(Optimizer):
+    """
+    Wraps SciPy's basin hopping opimizer.
+    """
+
+    def __init__(self, domain, niter=100, T=1.0, stepsize=0.5,
+                 loc_method='L-BFGS-B', loc_tol=None, loc_maxiter=1000):
+        super(SciPyBasinHoppingOptimizer, self).__init__(domain)
+        options = dict(disp=settings.verbosity.optimisation_verb,
+                       maxiter=loc_maxiter)
+        loc_config = dict(tol=loc_tol,
+                          method=loc_method,
+                          options=options,
+                          jac=self.gradient_enabled(),
+                          bounds=list(zip(self.domain.lower, self.domain.upper)))
+
+        self.config = dict(niter=niter,
+                           T=T,
+                           stepsize=stepsize,
+                           minimizer_kwargs=loc_config,
+                           callback=None,
+                           interval=50,
+                           disp=settings.verbosity.optimisation_verb,
+                           niter_success=None)
+
+    def _optimize(self, objective):
+        """
+        Calls scipy.optimize.basinhopping
+        """
+        objective1d = lambda X: tuple(map(lambda arr: arr.ravel(), objective(X)))
+        result = basinhopping(func=objective1d,
+                              x0=self.get_initial(),
+                              accept_test=self._in_domain,
+                              **self.config)
+        return result
+
+    def _in_domain(self,**kwargs):
+        """
+        Provide correct interface to accept_test in basin hopping optimizer
+        """
+        X = kwargs["x_new"]
+        X = np.atleast_2d(X)
+        return X in self.domain
 
 class StagedOptimizer(Optimizer):
     """
@@ -252,7 +296,7 @@ class StagedOptimizer(Optimizer):
     def optimize(self, objectivefx):
         """
         The StagedOptimizer overwrites the default behaviour of optimize(). It passes the best point of the previous
-        stage to the next stage. If the optimization is interrupted or fails, this process stops and the OptimizeResult 
+        stage to the next stage. If the optimization is interrupted or fails, this process stops and the OptimizeResult
         is returned.
         """
 
