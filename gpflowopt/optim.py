@@ -21,6 +21,7 @@ import numpy as np
 from gpflow import settings
 from scipy.optimize import OptimizeResult, minimize
 from scipy.optimize import basinhopping
+from scipy.optimize import differential_evolution
 
 from .design import RandomDesign
 from .objective import ObjectiveWrapper
@@ -222,6 +223,41 @@ class SciPyOptimizer(Optimizer):
                           jac=self.gradient_enabled(),
                           bounds=list(zip(self.domain.lower, self.domain.upper)),
                           **self.config)
+        return result
+
+class SciPyDifferentialEvoOptimizer(Optimizer):
+    """
+    Wraps SciPy's differential evolution opimizer.
+    """
+
+    def __init__(self, domain, strategy='best1bin', maxiter=1000, popsize=15,
+                 tol=0.01, mutation=(0.5, 1), recombination=0.7, polish=False,
+                 init='latinhypercube', atol=0):
+
+        super(SciPyDifferentialEvoOptimizer, self).__init__(domain)
+
+        self.config = dict(strategy=strategy,
+                           maxiter=maxiter,
+                           popsize=popsize,
+                           tol=tol,
+                           mutation=mutation,
+                           recombination=recombination,
+                           polish=polish,
+                           init=init,
+                           atol=atol,
+                           disp=settings.verbosity.optimisation_verb)
+
+    def _optimize(self, objective):
+        """
+        Calls scipy.optimize.differential_evolution
+        """
+        # scipys differential_evolution cannot deal with objective functions that
+        # also return gradients
+        objective1d = lambda X: objective(X)[0]
+        bounds = list(zip(self.domain.lower, self.domain.upper))
+        result = differential_evolution(func=objective1d,
+                                        bounds=bounds,
+                                        **self.config)
         return result
 
 class SciPyBasinHoppingOptimizer(Optimizer):
